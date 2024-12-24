@@ -21,7 +21,6 @@ ShortLinkService — консольное приложение для управ
 3. Скомпилируйте приложение:
    ```bash
    javac ShortLinkService.java
-либо используйте инструменты среды разработки, например, InteliJ IDEA
 4. После успешной компиляции выполните команду:
    ```bash
    java ShortLinkService
