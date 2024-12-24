@@ -1,79 +1,188 @@
+import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
-import java.time.*;
+import java.time.Instant;
+import java.awt.Desktop;
+import java.net.URI;
+
 
 /**
- * Класс для управления короткими ссылками.
+ * Основной класс для запуска приложения
+ * Управляет регистрацией, авторизацией и общим взаимодействием с пользователями.
  */
-class LinkManager {
+public class ShortLinkService {
 
-    public static void createShortLink(Scanner scanner, User user, Map<String, Link> links, ScheduledExecutorService scheduler, Properties config) {
-        System.out.println("Введите оригинальный URL:");
-        String originalUrl = scanner.nextLine();
+    private static final String SHORT_LINK_PREFIX = "krat.ko/";
+    private static final String CONFIG_FILE = "config.properties";
+    private static final String DATA_FILE = "data.txt";
 
-        System.out.println("Введите время жизни ссылки (в секундах):");
-        int userLifetime = Integer.parseInt(scanner.nextLine());
-        int defaultLifetime = Integer.parseInt(config.getProperty("defaultLifetimeSeconds"));
-        int lifetime = Math.min(userLifetime, defaultLifetime);
+    private static Map<String, User> users = new HashMap<>();
+    private static Map<String, Link> links = new ConcurrentHashMap<>();
+    private static ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+    private static Properties config = new Properties();
 
-        System.out.println("Введите лимит переходов:");
-        int userClickLimit = Integer.parseInt(scanner.nextLine());
-        int defaultClickLimit = Integer.parseInt(config.getProperty("defaultClickLimit"));
-        int clickLimit = Math.max(userClickLimit, defaultClickLimit);
-
-        String shortUrl = generateShortUrl();
-        Instant expiry = Instant.now().plusSeconds(lifetime);
-
-        Link link = new Link(originalUrl, shortUrl, user.getUuid(), expiry, clickLimit);
-        links.put(shortUrl, link);
-
-        System.out.println("Короткая ссылка создана: " + shortUrl);
-
-        scheduler.schedule(() -> links.remove(shortUrl), lifetime, TimeUnit.SECONDS);
+    public static void main(String[] args) throws IOException {
+        loadConfig();
+        loadData();
+        runApp();
     }
 
-    public static void viewLinks(Scanner scanner, User user, Map<String, Link> links) {
-        System.out.println("Ваши ссылки:");
+    private static void runApp() {
+        Scanner scanner = new Scanner(System.in);
 
-        for (Link link : links.values()) {
-            if (link.getOwnerUuid().equals(user.getUuid())) {
-                System.out.println(link.getShortUrl() + " -> " + link.getOriginalUrl() + " (Клики: " + link.getClicks() + "/" + link.getClickLimit() + ")");
+        while (true) {
+            System.out.println("1. Регистрация\n2. Авторизация\n3. Ввести короткую ссылку\n4. Выход");
+            int choice = Integer.parseInt(scanner.nextLine());
+
+            switch (choice) {
+                case 1 -> registerUser(scanner);
+                case 2 -> loginUser(scanner);
+                case 3 -> processShortLink(scanner);
+                case 4 -> {
+                    saveData();
+                    scheduler.shutdown();
+                    System.exit(0);
+                }
+                default -> System.out.println("Некорректный выбор, попробуйте снова.");
             }
         }
     }
 
-    public static void updateClickLimit(Scanner scanner, User user, Map<String, Link> links) {
-        System.out.println("Введите короткую ссылку для изменения лимита переходов:");
+    private static void processShortLink(Scanner scanner) {
+        System.out.println("Введите короткую ссылку:");
         String shortUrl = scanner.nextLine();
 
         Link link = links.get(shortUrl);
-        if (link == null || !link.getOwnerUuid().equals(user.getUuid())) {
-            System.out.println("Ссылка не найдена или у вас нет прав на её изменение.");
+        if (link == null) {
+            System.out.println("Ссылка недействительна или истек срок её действия.");
             return;
         }
 
-        System.out.println("Введите новый лимит переходов:");
-        int newLimit = Integer.parseInt(scanner.nextLine());
-        link.setClickLimit(newLimit);
-
-        System.out.println("Лимит переходов обновлён.");
-    }
-
-    public static void deleteLink(Scanner scanner, User user, Map<String, Link> links) {
-        System.out.println("Введите короткую ссылку для удаления:");
-        String shortUrl = scanner.nextLine();
-
-        Link link = links.get(shortUrl);
-        if (link == null || !link.getOwnerUuid().equals(user.getUuid())) {
-            System.out.println("Ссылка не найдена или у вас нет прав на её удаление.");
+        if (link.getClicks() >= link.getClickLimit()) {
+            System.out.println("Лимит переходов по ссылке исчерпан. Ссылка недоступна.");
             return;
         }
 
-        links.remove(shortUrl);
-        System.out.println("Ссылка удалена.");
+        if (link.getExpiry().isBefore(Instant.now())) {
+            System.out.println("Срок действия ссылки истёк. Ссылка недоступна.");
+            links.remove(shortUrl);
+            return;
+        }
+
+        // Увеличение счётчика кликов
+        link.incrementClicks();
+        System.out.println("Открытие ссылки...");
+
+        // Открытие оригинального ресурса в браузере
+        String originalUrl = link.getOriginalUrl();
+        if (Desktop.isDesktopSupported()) {
+            try {
+                Desktop.getDesktop().browse(new URI(originalUrl));
+                System.out.println("Переход выполнен: " + originalUrl);
+            } catch (Exception e) {
+                System.out.println("Ошибка при открытии ссылки в браузере: " + e.getMessage());
+            }
+        } else {
+            System.out.println("Ваше устройство не поддерживает автоматическое открытие ссылок в браузере.");
+            System.out.println("Ссылка: " + originalUrl);
+        }
     }
 
-    private static String generateShortUrl() {
-        return "krat.ko/" + UUID.randomUUID().toString().substring(0, 8);
+
+
+    /**
+     * Регистрация нового пользователя.
+     */
+    private static void registerUser(Scanner scanner) {
+        System.out.println("Введите ваше имя:");
+        String name = scanner.nextLine();
+        String uuid = UUID.randomUUID().toString();
+        users.put(uuid, new User(uuid, name));
+        System.out.println("Успешная регистрация! Ваш UUID: " + uuid);
+    }
+
+    /**
+     * Авторизация существующего пользователя.
+     */
+    private static void loginUser(Scanner scanner) {
+        System.out.println("Введите ваш UUID:");
+        String uuid = scanner.nextLine();
+
+        if (!users.containsKey(uuid)) {
+            System.out.println("Неверный UUID. Попробуйте снова.");
+            return;
+        }
+
+        User user = users.get(uuid);
+        System.out.println("Добро пожаловать, " + user.getName() + "!");
+
+        while (true) {
+            System.out.println("1. Создать короткую ссылку\n2. Просмотреть ссылки\n3. Изменить лимит переходов\n4. Удалить ссылку\n5. Выйти");
+            int choice = Integer.parseInt(scanner.nextLine());
+
+            switch (choice) {
+                case 1 -> LinkManager.createShortLink(scanner, user, links, scheduler, config);
+                case 2 -> LinkManager.viewLinks(scanner, user, links);
+                case 3 -> LinkManager.updateClickLimit(scanner, user, links);
+                case 4 -> LinkManager.deleteLink(scanner, user, links);
+                case 5 -> {
+                    System.out.println("Вы успешно вышли.");
+                    return;
+                }
+                default -> System.out.println("Некорректный выбор, попробуйте снова.");
+            }
+        }
+    }
+
+    /**
+     * Загрузка конфигурации из файла.
+     */
+    private static void loadConfig() throws IOException {
+        File configFile = new File(CONFIG_FILE);
+        if (configFile.exists()) {
+            try (FileInputStream fis = new FileInputStream(configFile)) {
+                config.load(fis);
+            }
+        } else {
+            config.setProperty("defaultLifetimeSeconds", "3600");
+            config.setProperty("defaultClickLimit", "10");
+            saveConfig();
+        }
+    }
+
+    /**
+     * Сохранение конфигурации в файл.
+     */
+    private static void saveConfig() throws IOException {
+        try (FileOutputStream fos = new FileOutputStream(CONFIG_FILE)) {
+            config.store(fos, "Default Configuration");
+        }
+    }
+
+    /**
+     * Загрузка данных пользователей и ссылок из файла.
+     */
+    private static void loadData() {
+        File dataFile = new File(DATA_FILE);
+        if (!dataFile.exists()) return;
+
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(dataFile))) {
+            users = (Map<String, User>) ois.readObject();
+            links = (Map<String, Link>) ois.readObject();
+        } catch (IOException | ClassNotFoundException e) {
+            System.out.println("Ошибка загрузки данных: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Сохранение данных пользователей и ссылок в файл.
+     */
+    private static void saveData() {
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(DATA_FILE))) {
+            oos.writeObject(users);
+            oos.writeObject(links);
+        } catch (IOException e) {
+            System.out.println("Ошибка сохранения данных: " + e.getMessage());
+        }
     }
 }
