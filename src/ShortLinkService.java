@@ -2,6 +2,8 @@ import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.time.Instant;
+import java.awt.Desktop;
+import java.net.URI;
 
 /**
  * Основной класс для запуска приложения
@@ -46,29 +48,42 @@ public class ShortLinkService {
     }
 
     private static void processShortLink(Scanner scanner) {
-        System.out.println("Введите короткую ссылку:");
-        String shortUrl = scanner.nextLine();
+    System.out.println("Введите короткую ссылку:");
+    String shortUrl = scanner.nextLine();
 
-        Link link = links.get(shortUrl);
-        if (link == null) {
-            System.out.println("Ссылка недействительна или истек срок её действия.");
-            return;
-        }
-
-        if (link.getClicks() >= link.getClickLimit()) {
-            System.out.println("Лимит переходов по ссылке исчерпан. Ссылка недоступна.");
-            return;
-        }
-
-        if (link.getExpiry().isBefore(Instant.now())) {
-            System.out.println("Срок действия ссылки истёк. Ссылка недоступна.");
-            links.remove(shortUrl);
-            return;
-        }
-
-        link.incrementClicks();
-        System.out.println("Переход на: " + link.getOriginalUrl());
+    Link link = links.get(shortUrl);
+    if (link == null) {
+        System.out.println("Ссылка недействительна или истек срок её действия.");
+        return;
     }
+
+    if (link.getClicks() >= link.getClickLimit()) {
+        System.out.println("Лимит переходов по ссылке исчерпан. Ссылка недоступна.");
+        return;
+    }
+
+    if (link.getExpiry().isBefore(Instant.now())) {
+        System.out.println("Срок действия ссылки истёк. Ссылка недоступна.");
+        links.remove(shortUrl);
+        return;
+    }
+
+    link.incrementClicks();
+
+    String originalUrl = link.getOriginalUrl();
+    if (Desktop.isDesktopSupported()) {
+        try {
+            Desktop.getDesktop().browse(new URI(originalUrl));
+            System.out.println("Переход на сайт открыт в браузере: " + originalUrl);
+        } catch (Exception e) {
+            System.out.println("Ошибка при открытии ссылки в браузере: " + e.getMessage());
+        }
+    } else {
+        System.out.println("Ваше устройство не поддерживает автоматическое открытие ссылок в браузере.");
+        System.out.println("Ссылка: " + originalUrl);
+    }
+}
+
 
     /**
      * Регистрация нового пользователя.
